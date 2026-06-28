@@ -1,218 +1,283 @@
-// src/js/app.js
-import {
-  searchGenius,
-  rankCandidates,
-  shouldAskForClarification,
-  pickBaseSong,
-  findRelatedPages,
-  analyzeSupport,
-} from './genius.js';
-import { downloadLyricsLinks } from './export.js';
+// ─── app.js ───────────────────────────────────────────────────────────────────
+import { searchGenius, extractVariants, suggestArtists } from './genius.js';
+import { addToHistory, getHistory, clearHistory }        from './history.js';
 
-const form = document.getElementById('searchForm');
-const titleInput = document.getElementById('titleInput');
-const artistInput = document.getElementById('artistInput');
-const searchBtn = document.getElementById('searchBtn');
-const errorMsg = document.getElementById('errorMsg');
-const feedbackCard = document.getElementById('feedbackCard');
-const candidateSection = document.getElementById('candidateSection');
-const candidateList = document.getElementById('candidateList');
-const songInfo = document.getElementById('songInfo');
-const songArt = document.getElementById('songArt');
-const songTitle = document.getElementById('songTitle');
-const songArtist = document.getElementById('songArtist');
-const lyricsGrid = document.getElementById('lyricsGrid');
-const downloadBtn = document.getElementById('downloadBtn');
+const titleInput      = document.getElementById('title-input');
+const artistInput     = document.getElementById('artist-input');
+const suggestBox      = document.getElementById('artist-suggestions');
+const searchBtn       = document.getElementById('search-btn');
+const feedbackEl      = document.getElementById('feedback');
+const resultsSection  = document.getElementById('results-section');
+const songMeta        = document.getElementById('song-meta');
+const tabs            = document.querySelectorAll('.tab-btn');
+const panels          = document.querySelectorAll('.tab-panel');
+const historyPanel    = document.getElementById('history-panel');
+const historyList     = document.getElementById('history-list');
+const clearHistoryBtn = document.getElementById('clear-history-btn');
+const downloadBtn     = document.getElementById('download-btn');
+const themeToggle     = document.querySelector('[data-theme-toggle]');
 
-let currentState = null;
-
+// ── Theme toggle ──────────────────────────────────────────────────────────────
 (function () {
-  const toggle = document.querySelector('[data-theme-toggle]');
   const root = document.documentElement;
-  let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  let dark   = matchMedia('(prefers-color-scheme:dark)').matches;
   root.setAttribute('data-theme', dark ? 'dark' : 'light');
-  if (toggle) {
-    toggle.addEventListener('click', () => {
-      dark = !dark;
-      root.setAttribute('data-theme', dark ? 'dark' : 'light');
-    });
+  updateThemeIcon();
+  themeToggle.addEventListener('click', () => {
+    dark = !dark;
+    root.setAttribute('data-theme', dark ? 'dark' : 'light');
+    updateThemeIcon();
+  });
+  function updateThemeIcon() {
+    themeToggle.setAttribute('aria-label', `Switch to ${dark ? 'light' : 'dark'} mode`);
+    themeToggle.innerHTML = dark
+      ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`
+      : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
   }
 })();
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  await runSearch({ title: titleInput.value.trim(), artist: artistInput.value.trim() });
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentVariants = null;
+let currentMeta     = null;
+
+// ── Autosuggest ───────────────────────────────────────────────────────────────
+let suggestTimer = null;
+
+titleInput.addEventListener('input', () => {
+  clearTimeout(suggestTimer);
+  const val = titleInput.value.trim();
+  if (val.length < 2) { hideSuggest(); return; }
+  suggestTimer = setTimeout(() => runAutosuggest(val), 400);
+});
+titleInput.addEventListener('keydown', e => { if (e.key === 'Escape') hideSuggest(); });
+document.addEventListener('click', e => {
+  if (!suggestBox.contains(e.target) && e.target !== titleInput) hideSuggest();
 });
 
-async function runSearch({ title, artist }) {
-  resetUI();
+async function runAutosuggest(query) {
+  let artists;
+  try { artists = await suggestArtists(query); }
+  catch { hideSuggest(); return; }
+  if (!artists.length) { hideSuggest(); return; }
+  renderSuggest(artists);
+}
 
-  if (!title) {
-    showError('Please enter a song title.');
-    return;
-  }
+function renderSuggest(artists) {
+  suggestBox.innerHTML = '';
+  artists.forEach(a => {
+    const li   = document.createElement('li');
+    li.setAttribute('role', 'option');
+    li.tabIndex = 0;
+    if (a.thumbnail) {
+      const img    = document.createElement('img');
+      img.src      = a.thumbnail;
+      img.alt      = a.name;
+      img.width    = 24;
+      img.height   = 24;
+      img.loading  = 'lazy';
+      li.appendChild(img);
+    }
+    const span       = document.createElement('span');
+    span.textContent = a.name;
+    li.appendChild(span);
+    const pick = () => { artistInput.value = a.name; hideSuggest(); artistInput.focus(); };
+    li.addEventListener('click', pick);
+    li.addEventListener('keydown', e => { if (e.key === 'Enter') pick(); });
+    suggestBox.appendChild(li);
+  });
+  suggestBox.hidden = false;
+}
 
-  if (title.length < 2) {
-    showError('Enter at least 2 characters for a useful search.');
-    return;
-  }
+function hideSuggest() { suggestBox.hidden = true; suggestBox.innerHTML = ''; }
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    tabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    panels.forEach(p => p.hidden = true);
+    tab.classList.add('active');
+    tab.setAttribute('aria-selected', 'true');
+    document.getElementById(tab.dataset.panel).hidden = false;
+  });
+});
+
+// ── Search ────────────────────────────────────────────────────────────────────
+searchBtn.addEventListener('click', runSearch);
+[titleInput, artistInput].forEach(el =>
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); })
+);
+
+async function runSearch() {
+  const title  = titleInput.value.trim();
+  const artist = artistInput.value.trim();
+  if (!title) { showFeedback('Please enter a song title.', 'warning'); titleInput.focus(); return; }
+
+  hideSuggest();
+  setLoading(true);
+  showFeedback('Searching Genius…', 'info');
+  resultsSection.hidden = true;
 
   try {
-    setBusy(true);
+    const query    = artist ? `${title} ${artist}` : title;
+    const hits     = await searchGenius(query);
 
-    const query = artist ? `${title} ${artist}` : title;
-    const results = await searchGenius(query);
-
-    if (!results.length) {
-      showFeedback('error', 'No matching Genius results found.', [
-        'Check the spelling of the title or artist.',
-        'Try removing punctuation or featured artists.',
-        'Try the song title by itself if the artist spelling is uncertain.',
-      ]);
+    if (!hits.length) {
+      setLoading(false);
+      showFeedback('No results found on Genius. Try a different spelling or artist name.', 'error');
       return;
     }
 
-    const ranked = rankCandidates(results, title, artist);
+    const variants = extractVariants(hits, title, artist || '');
 
-    if (shouldAskForClarification(ranked, artist)) {
-      renderCandidates(ranked.slice(0, 6), title);
-      showFeedback('warning', 'Multiple possible matches found.', [
-        'Choose the correct song and artist from the list below.',
-      ]);
+    if (!variants.hangul && !variants.romanized && !variants.english) {
+      setLoading(false);
+      showFeedback('Genius returned results but none matched this song\'s lyric pages. Try adding the artist name.', 'warning');
       return;
     }
 
-    const baseSong = pickBaseSong(ranked);
-    await finalizeSelection(baseSong);
+    currentVariants = variants;
+    currentMeta     = {
+      title:  variants.hangul?.title || variants.romanized?.title || variants.english?.title || title,
+      artist: variants.hangul?.primary_artist?.name || variants.romanized?.primary_artist?.name || variants.english?.primary_artist?.name || artist,
+    };
+
+    addToHistory({ ...currentMeta, variants });
+    renderHistory();
+
+    const coverUrl = variants.hangul?.header_image_thumbnail_url
+                  || variants.romanized?.header_image_thumbnail_url
+                  || variants.english?.header_image_thumbnail_url || '';
+
+    songMeta.innerHTML = `
+      ${coverUrl ? `<img src="${coverUrl}" alt="Cover art for ${currentMeta.title}" width="56" height="56" loading="lazy" class="song-cover">` : ''}
+      <div class="song-meta-text">
+        <h2 class="song-title">${currentMeta.title}</h2>
+        <p class="song-artist">${currentMeta.artist}</p>
+      </div>`;
+
+    populatePanel('panel-hangul',    variants.hangul);
+    populatePanel('panel-romanized', variants.romanized);
+    populatePanel('panel-english',   variants.english);
+
+    tabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    panels.forEach(p => p.hidden = true);
+    tabs[0].classList.add('active');
+    tabs[0].setAttribute('aria-selected', 'true');
+    document.getElementById(tabs[0].dataset.panel).hidden = false;
+
+    setLoading(false);
+    resultsSection.hidden = false;
+
+    const missing = ['hangul', 'romanized', 'english'].filter(k => !variants[k]);
+    if (missing.length) {
+      const labels = { hangul: 'Hangul', romanized: 'Romanized', english: 'English' };
+      showFeedback(`Found the song but Genius doesn't have a ${missing.map(k => labels[k]).join(', ')} page for it yet.`, 'warning');
+    } else {
+      showFeedback('', '');
+    }
+
   } catch (err) {
-    showError(err.message || 'Something went wrong while searching Genius.');
-  } finally {
-    setBusy(false);
+    setLoading(false);
+    showFeedback(`Something went wrong: ${err.message}. Check your Genius token or try again.`, 'error');
   }
 }
 
-async function finalizeSelection(baseSong) {
-  if (!baseSong) {
-    showFeedback('error', 'A base Genius song page could not be determined.', [
-      'Try entering both the exact title and artist.',
-    ]);
+// ── Panel population ──────────────────────────────────────────────────────────
+function populatePanel(panelId, song) {
+  const panel = document.getElementById(panelId);
+  if (!song) {
+    panel.innerHTML = `
+      <div class="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        <p>No page found on Genius for this variant.</p>
+        <p class="hint">The Genius community may not have added it yet.</p>
+      </div>`;
     return;
   }
-
-  const pages = await findRelatedPages(baseSong);
-  const analysis = analyzeSupport(baseSong, pages);
-
-  currentState = { baseSong, pages, analysis };
-  renderSongInfo(baseSong, analysis);
-  renderFeedbackFromAnalysis(analysis);
-  renderLyricPanels(pages);
-
-  downloadBtn.onclick = () => downloadLyricsLinks(baseSong, pages, analysis);
+  panel.innerHTML = `
+    <div class="genius-link-bar">
+      <a href="${song.url}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">
+        Open on Genius
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <span class="genius-title">${song.full_title}</span>
+    </div>
+    <iframe
+      src="${song.url}"
+      title="${song.full_title} lyrics on Genius"
+      loading="lazy"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+      class="lyrics-frame"
+    ></iframe>`;
 }
 
-function renderCandidates(rankedItems) {
-  candidateList.innerHTML = rankedItems.map(({ result, score }) => `
-    <button class="candidate-item" data-song-id="${result.id}">
-      <div class="candidate-song">${escapeHtml(result.title)}</div>
-      <div class="candidate-artist">${escapeHtml(result.primary_artist?.name || 'Unknown artist')}</div>
-      <div class="candidate-meta">Score: ${score} · ${escapeHtml(result.full_title || '')}</div>
-    </button>
-  `).join('');
-
-  candidateSection.hidden = false;
-
-  const buttons = candidateList.querySelectorAll('.candidate-item');
-  buttons.forEach((button, index) => {
-    button.addEventListener('click', async () => {
-      const ranked = rankedItems[index];
-      await finalizeSelection(ranked.result);
-      candidateSection.hidden = true;
+// ── Download ──────────────────────────────────────────────────────────────────
+downloadBtn.addEventListener('click', () => {
+  if (!currentVariants || !currentMeta) return;
+  const lines = [
+    `K-pop Lyrics: ${currentMeta.title} — ${currentMeta.artist}`,
+    `Generated by K-pop Lyrics Agent`, `${'─'.repeat(60)}`, '',
+  ];
+  [{ key: 'hangul', label: 'HANGUL (한국어)' }, { key: 'romanized', label: 'ROMANIZED' }, { key: 'english', label: 'ENGLISH' }]
+    .forEach(({ key, label }) => {
+      lines.push(`## ${label}`);
+      const song = currentVariants[key];
+      lines.push(song ? `Genius page: ${song.url}\nFull title:  ${song.full_title}` : '(Not available on Genius)');
+      lines.push('');
     });
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `${currentMeta.title} - ${currentMeta.artist} lyrics.txt`.replace(/[/\\?%*:|"<>]/g, '-');
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ── History ───────────────────────────────────────────────────────────────────
+function renderHistory() {
+  const items = getHistory();
+  if (!items.length) { historyPanel.hidden = true; return; }
+  historyPanel.hidden = false;
+  historyList.innerHTML = '';
+  items.forEach(item => {
+    const li  = document.createElement('li');
+    li.className = 'history-item';
+    const badge = v => v
+      ? `<span class="variant-badge found" title="Found">✓</span>`
+      : `<span class="variant-badge missing" title="Not found">—</span>`;
+    li.innerHTML = `
+      <button class="history-entry" aria-label="Re-search ${item.title} by ${item.artist}">
+        <span class="history-song">
+          <span class="history-title">${item.title}</span>
+          <span class="history-artist">${item.artist}</span>
+        </span>
+        <span class="history-badges">
+          <span class="badge-label">한</span>${badge(item.variants?.hangul)}
+          <span class="badge-label">Rom</span>${badge(item.variants?.romanized)}
+          <span class="badge-label">En</span>${badge(item.variants?.english)}
+        </span>
+      </button>`;
+    li.querySelector('.history-entry').addEventListener('click', () => {
+      titleInput.value = item.title; artistInput.value = item.artist; runSearch();
+    });
+    historyList.appendChild(li);
   });
 }
 
-function renderSongInfo(baseSong, analysis) {
-  songArt.src = baseSong.song_art_image_thumbnail_url || baseSong.header_image_thumbnail_url || '';
-  songArt.alt = `${baseSong.title} cover art`;
-  songTitle.textContent = baseSong.title;
-  songArtist.textContent = `${baseSong.primary_artist?.name || 'Unknown artist'} · ${analysis.seemsKorean ? 'Likely Korean-support workflow' : 'Compatibility uncertain'}`;
-  songInfo.hidden = false;
+clearHistoryBtn.addEventListener('click', () => { clearHistory(); renderHistory(); });
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+function showFeedback(message, type) {
+  if (!message) { feedbackEl.hidden = true; feedbackEl.textContent = ''; feedbackEl.className = 'feedback'; return; }
+  feedbackEl.textContent = message;
+  feedbackEl.className   = `feedback feedback--${type}`;
+  feedbackEl.hidden      = false;
 }
 
-function renderFeedbackFromAnalysis(analysis) {
-  const title = analysis.status === 'success'
-    ? 'All required Genius pages were found.'
-    : analysis.status === 'warning'
-      ? 'The song is only partially supported.'
-      : 'This song is not currently compatible.';
-
-  const items = [...analysis.positives, ...analysis.issues];
-  showFeedback(analysis.status, title, items);
-}
-
-function renderLyricPanels({ hangul, romanized, english }) {
-  const panels = [
-    { label: 'Original', lang: '한국어 (Hangul)', data: hangul },
-    { label: 'Romanized', lang: 'Romanized Korean', data: romanized },
-    { label: 'Translation', lang: 'English Translation', data: english },
-  ];
-
-  lyricsGrid.innerHTML = panels.map(({ label, lang, data }) => `
-    <article class="lyric-panel">
-      <div class="panel-header">
-        <div>
-          <div class="panel-label">${label}</div>
-          <div class="panel-lang">${lang}</div>
-        </div>
-        ${data.found ? `<a class="genius-link" href="${data.url}" target="_blank" rel="noopener noreferrer">Open ↗</a>` : ''}
-      </div>
-      <div class="panel-body" ${data.found ? 'style="padding:0"' : ''}>
-        ${data.found
-          ? `<iframe class="genius-embed" src="${data.url}" title="${escapeHtml(data.title)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>`
-          : `<p class="panel-not-found">No Genius page found for ${lang}. This usually means the song is too obscure, too new, or not fully documented yet.</p>`}
-      </div>
-    </article>
-  `).join('');
-
-  lyricsGrid.hidden = false;
-}
-
-function showFeedback(type, title, items = []) {
-  feedbackCard.className = `feedback-card ${type}`;
-  feedbackCard.innerHTML = `
-    <strong>${escapeHtml(title)}</strong>
-    ${items.length ? `<ul style="margin-top:12px; padding-left:18px; display:grid; gap:8px;">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
-  `;
-  feedbackCard.hidden = false;
-}
-
-function showError(message) {
-  errorMsg.textContent = message;
-  errorMsg.hidden = false;
-}
-
-function resetUI() {
-  errorMsg.hidden = true;
-  errorMsg.textContent = '';
-  feedbackCard.hidden = true;
-  feedbackCard.innerHTML = '';
-  candidateSection.hidden = true;
-  candidateList.innerHTML = '';
-  songInfo.hidden = true;
-  lyricsGrid.hidden = true;
-  lyricsGrid.innerHTML = '';
-}
-
-function setBusy(isBusy) {
-  searchBtn.disabled = isBusy;
-  searchBtn.textContent = isBusy ? 'Searching…' : 'Find Lyrics';
-}
-
-function escapeHtml(str = '') {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+// ── Loading ───────────────────────────────────────────────────────────────────
+function setLoading(on) {
+  searchBtn.disabled    = on;
+  searchBtn.setAttribute('aria-busy', on);
+  searchBtn.textContent = on ? 'Searching…' : 'Search';
+  on ? titleInput.setAttribute('aria-busy', 'true') : titleInput.removeAttribute('aria-busy');
 }

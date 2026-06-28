@@ -1,75 +1,222 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>K-Pop Lyrics Agent</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Search any K-pop song and instantly view its Hangul, Romanized Korean, and English lyrics from Genius.">
+  <title>K-pop Lyrics Agent</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <!-- Favicon (inline SVG data URI) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎵</text></svg>">
+
+  <!-- Font: Satoshi from Fontshare -->
+  <link rel="preconnect" href="https://api.fontshare.com">
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="./css/style.css" />
+  <!-- Styles -->
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
-  <header class="app-header">
-    <div class="header-inner">
-      <div class="logo" aria-label="K-Pop Lyrics Agent">
-        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" width="36" height="36" aria-hidden="true">
-          <circle cx="18" cy="18" r="17" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M13 24V14l10-2v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="11" cy="24" r="2" fill="currentColor"/>
-          <circle cx="21" cy="22" r="2" fill="currentColor"/>
-        </svg>
-        <span class="logo-text">한글 Lyrics</span>
-      </div>
 
-      <button class="theme-toggle" data-theme-toggle aria-label="Switch to light mode">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-        </svg>
-      </button>
+  <!-- Skip link for keyboard accessibility -->
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="site-header" role="banner">
+    <a href="." class="logo" aria-label="K-pop Lyrics Agent home">
+      <svg class="logo-mark" width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+        <path d="M6 4 L3 4 L3 24 L6 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M22 4 L25 4 L25 24 L22 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <ellipse cx="12" cy="19" rx="3" ry="2" fill="currentColor"/>
+        <line x1="15" y1="19" x2="15" y2="9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M15 9 Q21 11 18 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+      </svg>
+      <span class="logo-text">K-pop Lyrics</span>
+    </a>
+
+    <div class="header-actions">
+      <button
+        class="btn-icon"
+        data-theme-toggle
+        aria-label="Toggle colour mode"
+        type="button"
+      ></button>
     </div>
   </header>
 
-  <main class="app-main">
-    <section class="search-section">
-      <h1 class="search-title">Find a K-pop song on Genius</h1>
-      <p class="search-subtitle">Enter a song title and artist to find the original, romanized, and English lyrics pages.</p>
+  <!-- ── Main ────────────────────────────────────────────────────────────── -->
+  <main id="main-content" class="page-main">
 
-      <form class="search-form" id="searchForm">
-        <input type="text" id="titleInput" class="search-input" placeholder="Song title" aria-label="Song title" required />
-        <input type="text" id="artistInput" class="search-input" placeholder="Artist (optional)" aria-label="Artist name" />
-        <button type="submit" class="btn btn-primary" id="searchBtn">Find Lyrics</button>
+    <!-- Search card -->
+    <section aria-label="Search for K-pop lyrics" class="search-card">
+      <h1>K-pop Lyrics Agent</h1>
+      <p class="tagline">Enter a song title to view Hangul, Romanized, and English lyrics from Genius.</p>
+
+      <form class="search-form" role="search" onsubmit="return false;">
+
+        <!-- Title field + autosuggest -->
+        <div class="field">
+          <label for="title-input">Song title <span aria-hidden="true">*</span></label>
+          <input
+            id="title-input"
+            type="text"
+            placeholder="e.g. Dynamite"
+            autocomplete="off"
+            required
+            aria-required="true"
+            aria-label="Song title"
+          >
+          <ul
+            id="artist-suggestions"
+            role="listbox"
+            aria-label="Artist suggestions"
+            hidden
+          ></ul>
+        </div>
+
+        <!-- Artist field -->
+        <div class="field">
+          <label for="artist-input">Artist <span style="color:var(--color-text-faint);font-weight:400">(optional)</span></label>
+          <input
+            id="artist-input"
+            type="text"
+            placeholder="e.g. BTS"
+            autocomplete="off"
+            aria-label="Artist name (optional)"
+          >
+        </div>
+
+        <!-- Search button -->
+        <button
+          id="search-btn"
+          type="submit"
+          class="btn-primary"
+          aria-label="Search Genius for lyrics"
+        >
+          Search
+        </button>
       </form>
 
-      <p class="error-msg" id="errorMsg" role="alert" hidden></p>
-      <div class="feedback-card" id="feedbackCard" hidden></div>
+      <!-- Feedback / status bar -->
+      <div
+        id="feedback"
+        role="status"
+        aria-live="polite"
+        class="feedback"
+        hidden
+      ></div>
     </section>
 
-    <section class="candidate-section" id="candidateSection" hidden>
-      <div class="candidate-header">
-        <h2 class="candidate-title">Choose the correct song</h2>
-        <p class="candidate-subtitle">These were the closest Genius matches.</p>
+    <!-- ── Results ──────────────────────────────────────────────────────── -->
+    <section id="results-section" aria-label="Lyrics results" hidden>
+      <div class="results-card">
+
+        <!-- Song meta — populated by JS -->
+        <div id="song-meta" class="song-meta" aria-live="polite"></div>
+
+        <!-- Tab bar -->
+        <div class="tabs-bar" role="tablist" aria-label="Lyric variants">
+          <div class="tabs-group">
+            <button
+              class="tab-btn active"
+              role="tab"
+              aria-selected="true"
+              aria-controls="panel-hangul"
+              data-panel="panel-hangul"
+              id="tab-hangul"
+            >한국어 Hangul</button>
+
+            <button
+              class="tab-btn"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-romanized"
+              data-panel="panel-romanized"
+              id="tab-romanized"
+            >Romanized</button>
+
+            <button
+              class="tab-btn"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-english"
+              data-panel="panel-english"
+              id="tab-english"
+            >English</button>
+          </div>
+
+          <!-- Download button -->
+          <button
+            id="download-btn"
+            class="btn-ghost btn-sm"
+            aria-label="Download all lyric links as a text file"
+            type="button"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download
+          </button>
+        </div>
+
+        <!-- Tab panels — content injected by JS -->
+        <div
+          id="panel-hangul"
+          role="tabpanel"
+          aria-labelledby="tab-hangul"
+          class="tab-panel"
+        ></div>
+
+        <div
+          id="panel-romanized"
+          role="tabpanel"
+          aria-labelledby="tab-romanized"
+          class="tab-panel"
+          hidden
+        ></div>
+
+        <div
+          id="panel-english"
+          role="tabpanel"
+          aria-labelledby="tab-english"
+          class="tab-panel"
+          hidden
+        ></div>
+
       </div>
-      <div class="candidate-list" id="candidateList"></div>
     </section>
 
-    <section class="song-info" id="songInfo" hidden>
-      <img class="song-art" id="songArt" src="" alt="" width="72" height="72" loading="lazy"/>
-      <div class="song-meta">
-        <p class="song-title" id="songTitle"></p>
-        <p class="song-artist" id="songArtist"></p>
+    <!-- ── Session history ──────────────────────────────────────────────── -->
+    <aside id="history-panel" aria-label="Recent searches" hidden>
+      <div class="history-card">
+        <div class="history-header">
+          <h2>Recent searches
+            <span style="color:var(--color-text-faint);font-weight:400;font-size:var(--text-xs)">
+              (this session only)
+            </span>
+          </h2>
+          <button
+            id="clear-history-btn"
+            class="btn-ghost btn-sm"
+            aria-label="Clear search history"
+            type="button"
+          >Clear</button>
+        </div>
+        <ul id="history-list" class="history-list" role="list" aria-label="Search history"></ul>
       </div>
-      <button class="btn btn-ghost" id="downloadBtn">↓ Download links (.txt)</button>
-    </section>
+    </aside>
 
-    <section class="lyrics-grid" id="lyricsGrid" hidden></section>
   </main>
 
-  <script type="module" src="./js/genius.js"></script>
-  <script type="module" src="./js/export.js"></script>
+  <!-- ── Footer ──────────────────────────────────────────────────────────── -->
+  <footer class="site-footer" role="contentinfo">
+    <p>Lyrics sourced from <a href="https://genius.com" target="_blank" rel="noopener noreferrer">Genius</a>. No lyrics are stored by this app.</p>
+  </footer>
+
+  <!-- ES module — required for import/export in app.js -->
   <script type="module" src="./js/app.js"></script>
+
 </body>
 </html>
