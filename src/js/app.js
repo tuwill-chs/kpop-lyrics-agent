@@ -1,6 +1,6 @@
 // ─── app.js ───────────────────────────────────────────────────────────────────
-import { searchGenius, extractVariants, suggestArtists } from './genius.js';
-import { addToHistory, getHistory, clearHistory }        from './history.js';
+import { searchGenius, extractVariants, suggestArtists, fetchLyrics } from './genius.js';
+import { addToHistory, getHistory, clearHistory }                      from './history.js';
 
 const titleInput      = document.getElementById('title-input');
 const artistInput     = document.getElementById('artist-input');
@@ -37,8 +37,9 @@ const themeToggle     = document.querySelector('[data-theme-toggle]');
 })();
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let currentVariants = null;
-let currentMeta     = null;
+let currentVariants  = null;
+let currentMeta      = null;
+let currentLyrics    = { hangul: null, romanized: null, english: null };
 
 // ── Autosuggest ───────────────────────────────────────────────────────────────
 let suggestTimer = null;
@@ -65,16 +66,16 @@ async function runAutosuggest(query) {
 function renderSuggest(artists) {
   suggestBox.innerHTML = '';
   artists.forEach(a => {
-    const li   = document.createElement('li');
+    const li = document.createElement('li');
     li.setAttribute('role', 'option');
     li.tabIndex = 0;
     if (a.thumbnail) {
-      const img    = document.createElement('img');
-      img.src      = a.thumbnail;
-      img.alt      = a.name;
-      img.width    = 24;
-      img.height   = 24;
-      img.loading  = 'lazy';
+      const img   = document.createElement('img');
+      img.src     = a.thumbnail;
+      img.alt     = a.name;
+      img.width   = 24;
+      img.height  = 24;
+      img.loading = 'lazy';
       li.appendChild(img);
     }
     const span       = document.createElement('span');
@@ -116,6 +117,7 @@ async function runSearch() {
   setLoading(true);
   showFeedback('Searching Genius…', 'info');
   resultsSection.hidden = true;
+  currentLyrics = { hangul: null, romanized: null, english: null };
 
   try {
     const query    = artist ? `${title} ${artist}` : title;
@@ -131,7 +133,7 @@ async function runSearch() {
 
     if (!variants.hangul && !variants.romanized && !variants.english) {
       setLoading(false);
-      showFeedback('Genius returned results but none matched this song\'s lyric pages. Try adding the artist name.', 'warning');
+      showFeedback("Genius returned results but none matched this song's lyric pages. Try adding the artist name.", 'warning');
       return;
     }
 
@@ -140,9 +142,6 @@ async function runSearch() {
       title:  variants.hangul?.title || variants.romanized?.title || variants.english?.title || title,
       artist: variants.hangul?.primary_artist?.name || variants.romanized?.primary_artist?.name || variants.english?.primary_artist?.name || artist,
     };
-
-    addToHistory({ ...currentMeta, variants });
-    renderHistory();
 
     const coverUrl = variants.hangul?.header_image_thumbnail_url
                   || variants.romanized?.header_image_thumbnail_url
@@ -155,10 +154,12 @@ async function runSearch() {
         <p class="song-artist">${currentMeta.artist}</p>
       </div>`;
 
+    // Build panels with loading skeletons first, then fetch lyrics in parallel
     populatePanel('panel-hangul',    variants.hangul);
     populatePanel('panel-romanized', variants.romanized);
     populatePanel('panel-english',   variants.english);
 
+    // Reset to first tab
     tabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
     panels.forEach(p => p.hidden = true);
     tabs[0].classList.add('active');
@@ -176,19 +177,36 @@ async function runSearch() {
       showFeedback('', '');
     }
 
+    // Fetch all three lyric bodies in parallel — panels update as each resolves
+    const keys = ['hangul', 'romanized', 'english'];
+    await Promise.allSettled(keys.map(async key => {
+      const song = variants[key];
+      if (!song) return;
+      const text = await fetchLyrics(song.url);
+      currentLyrics[key] = text;
+      setLyricsInPanel(`panel-${key}`, song, text);
+    }));
+
+    // Now safe to save to history (lyrics may be attached for download)
+    addToHistory({ ...currentMeta, variants });
+    renderHistory();
+
   } catch (err) {
     setLoading(false);
-    showFeedback(`Something went wrong: ${err.message}. Check your Genius token or try again.`, 'error');
+    showFeedback(`Something went wrong: ${err.message}`, 'error');
   }
 }
 
 // ── Panel population ──────────────────────────────────────────────────────────
+// Called immediately — renders the link bar + a loading skeleton
 function populatePanel(panelId, song) {
   const panel = document.getElementById(panelId);
   if (!song) {
     panel.innerHTML = `
       <div class="empty-state">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+        </svg>
         <p>No page found on Genius for this variant.</p>
         <p class="hint">The Genius community may not have added it yet.</p>
       </div>`;
@@ -202,13 +220,32 @@ function populatePanel(panelId, song) {
       </a>
       <span class="genius-title">${song.full_title}</span>
     </div>
-    <iframe
-      src="${song.url}"
-      title="${song.full_title} lyrics on Genius"
-      loading="lazy"
-      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-      class="lyrics-frame"
-    ></iframe>`;
+    <div class="lyrics-loading" aria-live="polite">
+      <div class="skeleton skeleton-text" style="width:60%;margin-bottom:var(--space-3)"></div>
+      <div class="skeleton skeleton-text" style="width:80%"></div>
+      <div class="skeleton skeleton-text" style="width:70%"></div>
+      <div class="skeleton skeleton-text" style="width:75%"></div>
+      <div class="skeleton skeleton-text" style="width:55%"></div>
+    </div>
+    <pre class="lyrics-text" hidden aria-label="Lyrics"></pre>`;
+}
+
+// Called after fetchLyrics resolves — swaps skeleton for real text
+function setLyricsInPanel(panelId, song, text) {
+  const panel    = document.getElementById(panelId);
+  const loading  = panel.querySelector('.lyrics-loading');
+  const lyricsEl = panel.querySelector('.lyrics-text');
+  if (!loading || !lyricsEl) return;
+
+  loading.hidden = true;
+  if (!text) {
+    lyricsEl.textContent = 'Lyrics could not be extracted. Open on Genius to read them.';
+  } else {
+    const lines = text.split('\n');
+    const firstContentLine = lines.findIndex(l => l.trim() !== '');
+    lyricsEl.textContent = lines.slice(firstContentLine + 1).join('\n').trimStart();
+  }
+  lyricsEl.hidden = false;
 }
 
 // ── Download ──────────────────────────────────────────────────────────────────
@@ -216,15 +253,29 @@ downloadBtn.addEventListener('click', () => {
   if (!currentVariants || !currentMeta) return;
   const lines = [
     `K-pop Lyrics: ${currentMeta.title} — ${currentMeta.artist}`,
-    `Generated by K-pop Lyrics Agent`, `${'─'.repeat(60)}`, '',
+    `Generated by K-pop Lyrics Agent`,
+    `${'─'.repeat(60)}`, '',
   ];
-  [{ key: 'hangul', label: 'HANGUL (한국어)' }, { key: 'romanized', label: 'ROMANIZED' }, { key: 'english', label: 'ENGLISH' }]
-    .forEach(({ key, label }) => {
-      lines.push(`## ${label}`);
-      const song = currentVariants[key];
-      lines.push(song ? `Genius page: ${song.url}\nFull title:  ${song.full_title}` : '(Not available on Genius)');
-      lines.push('');
-    });
+  [
+    { key: 'hangul',    label: 'HANGUL (한국어)' },
+    { key: 'romanized', label: 'ROMANIZED'       },
+    { key: 'english',   label: 'ENGLISH'          },
+  ].forEach(({ key, label }) => {
+    lines.push(`## ${label}`);
+    const song   = currentVariants[key];
+    const lyrics = currentLyrics[key];
+    if (!song) {
+      lines.push('(Not available on Genius)');
+    } else if (lyrics) {
+      // Include actual lyrics text in the download
+      lines.push(lyrics);
+    } else {
+      lines.push(`Genius page: ${song.url}`);
+      lines.push('(Lyrics could not be extracted — visit page above)');
+    }
+    lines.push('');
+  });
+
   const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
@@ -240,10 +291,10 @@ function renderHistory() {
   historyPanel.hidden = false;
   historyList.innerHTML = '';
   items.forEach(item => {
-    const li  = document.createElement('li');
+    const li = document.createElement('li');
     li.className = 'history-item';
     const badge = v => v
-      ? `<span class="variant-badge found" title="Found">✓</span>`
+      ? `<span class="variant-badge found"  title="Found">✓</span>`
       : `<span class="variant-badge missing" title="Not found">—</span>`;
     li.innerHTML = `
       <button class="history-entry" aria-label="Re-search ${item.title} by ${item.artist}">
@@ -258,7 +309,9 @@ function renderHistory() {
         </span>
       </button>`;
     li.querySelector('.history-entry').addEventListener('click', () => {
-      titleInput.value = item.title; artistInput.value = item.artist; runSearch();
+      titleInput.value  = item.title;
+      artistInput.value = item.artist;
+      runSearch();
     });
     historyList.appendChild(li);
   });
@@ -277,7 +330,7 @@ function showFeedback(message, type) {
 // ── Loading ───────────────────────────────────────────────────────────────────
 function setLoading(on) {
   searchBtn.disabled    = on;
-  searchBtn.setAttribute('aria-busy', on);
+  searchBtn.setAttribute('aria-busy', String(on));
   searchBtn.textContent = on ? 'Searching…' : 'Search';
   on ? titleInput.setAttribute('aria-busy', 'true') : titleInput.removeAttribute('aria-busy');
 }

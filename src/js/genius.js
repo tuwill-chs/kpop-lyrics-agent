@@ -1,21 +1,22 @@
 // ─── genius.js ────────────────────────────────────────────────────────────────
 const GENIUS_TOKEN = 'tDqL-5fU9oQPuYT1bxWmTeIok-6-Hg0rLcaG2BvXU50E4NBUDrzGfx_ak_807wif';
-const PROXY        = 'https://api.allorigins.win/get?url=';
+const PROXY        = 'https://corsproxy.io/?url=';
 const GENIUS_API   = 'https://api.genius.com';
+
 
 export async function searchGenius(query) {
   const endpoint = `${GENIUS_API}/search?q=${encodeURIComponent(query)}&access_token=${GENIUS_TOKEN}`;
   const res      = await fetch(`${PROXY}${encodeURIComponent(endpoint)}`);
-  if (!res.ok) throw new Error(`Genius API error: ${res.status}`);
-  const wrapper  = await res.json();
-  const data     = JSON.parse(wrapper.contents);
+  if (!res.ok) throw new Error(`Genius API error: ${res.status}. Check your Genius token or try again.`);
+  const data = await res.json();
   if (data.meta.status !== 200) throw new Error(`Genius returned status ${data.meta.status}`);
   return data.response.hits;
 }
 
+
 export function extractVariants(hits, songTitle, artistName) {
-  const songs      = hits.filter(h => h.type === 'song').map(h => h.result);
-  const fullTitle  = t => t.full_title.toLowerCase();
+  const songs       = hits.filter(h => h.type === 'song').map(h => h.result);
+  const fullTitle   = t => t.full_title.toLowerCase();
   const artistLower = artistName.toLowerCase();
   const titleLower  = songTitle.toLowerCase();
 
@@ -52,10 +53,11 @@ export function extractVariants(hits, songTitle, artistName) {
   };
 }
 
+
 export async function suggestArtists(titleQuery) {
   if (!titleQuery || titleQuery.trim().length < 2) return [];
-  const hits  = await searchGenius(titleQuery.trim());
-  const seen  = new Set();
+  const hits    = await searchGenius(titleQuery.trim());
+  const seen    = new Set();
   const artists = [];
   for (const hit of hits) {
     if (hit.type !== 'song') continue;
@@ -67,4 +69,32 @@ export async function suggestArtists(titleQuery) {
     if (artists.length >= 6) break;
   }
   return artists;
+}
+
+export async function fetchLyrics(geniusPageUrl) {
+  const proxied = `https://corsproxy.io/?url=${encodeURIComponent(geniusPageUrl)}`;
+  const res = await fetch(proxied);
+  if (!res.ok) throw new Error(`Failed to fetch lyrics page: ${res.status}`);
+  const html = await res.text();
+
+  // Parse the HTML and extract lyrics containers
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  // Genius wraps lyrics in data-lyrics-container="true" divs
+  const containers = doc.querySelectorAll('[data-lyrics-container="true"]');
+  if (!containers.length) return null;
+
+  let lyrics = '';
+  containers.forEach(container => {
+    // Replace <br> tags with newlines before reading text
+    container.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    // Get section headers like [Verse 1], [Chorus]
+    container.querySelectorAll('h2, h3').forEach(h => {
+      h.replaceWith(`\n${h.textContent}\n`);
+    });
+    lyrics += container.textContent + '\n\n';
+  });
+
+  return lyrics.trim();
 }
