@@ -4,12 +4,34 @@ const PROXY        = 'https://corsproxy.io/?url=';
 const GENIUS_API   = 'https://api.genius.com';
 
 
+const PROXIES = [
+  'https://corsproxy.io/?url=',
+  'https://api.allorigins.win/raw?url=',
+  'https://thingproxy.freeboard.io/fetch/',
+];
+
+async function fetchWithFallback(url) {
+  for (const proxy of PROXIES) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
+      const res = await fetch(`${proxy}${encodeURIComponent(url)}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (res.ok) return res;
+    } catch {
+      continue; // try next proxy
+    }
+  }
+  throw new Error('All proxies failed. Try again in a moment.');
+}
+
 export async function searchGenius(query) {
   const endpoint = `${GENIUS_API}/search?q=${encodeURIComponent(query)}&access_token=${GENIUS_TOKEN}`;
-  const res      = await fetch(`${PROXY}${encodeURIComponent(endpoint)}`);
-  if (!res.ok) throw new Error(`Genius API error: ${res.status}. Check your Genius token or try again.`);
+  const res  = await fetchWithFallback(endpoint);
   const data = await res.json();
-  if (data.meta.status !== 200) throw new Error(`Genius returned status ${data.meta.status}`);
+  if (data.meta?.status !== 200) throw new Error(`Genius returned status ${data.meta.status}`);
   return data.response.hits;
 }
 
@@ -72,29 +94,17 @@ export async function suggestArtists(titleQuery) {
 }
 
 export async function fetchLyrics(geniusPageUrl) {
-  const proxied = `https://corsproxy.io/?url=${encodeURIComponent(geniusPageUrl)}`;
-  const res = await fetch(proxied);
-  if (!res.ok) throw new Error(`Failed to fetch lyrics page: ${res.status}`);
+  const res  = await fetchWithFallback(geniusPageUrl);
   const html = await res.text();
-
-  // Parse the HTML and extract lyrics containers
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-
-  // Genius wraps lyrics in data-lyrics-container="true" divs
+  const parser     = new DOMParser();
+  const doc        = parser.parseFromString(html, 'text/html');
   const containers = doc.querySelectorAll('[data-lyrics-container="true"]');
   if (!containers.length) return null;
-
   let lyrics = '';
   containers.forEach(container => {
-    // Replace <br> tags with newlines before reading text
     container.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-    // Get section headers like [Verse 1], [Chorus]
-    container.querySelectorAll('h2, h3').forEach(h => {
-      h.replaceWith(`\n${h.textContent}\n`);
-    });
+    container.querySelectorAll('h2, h3').forEach(h => h.replaceWith(`\n${h.textContent}\n`));
     lyrics += container.textContent + '\n\n';
   });
-
   return lyrics.trim();
 }
